@@ -1,0 +1,15 @@
+[package]
+name = "gleem-protocol"
+description = "Wire types shared by the Gleem machine agent and the signalling gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+thiserror = "2"
