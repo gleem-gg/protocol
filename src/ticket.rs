@@ -40,6 +40,12 @@ pub struct TicketPayload {
     pub rid: Option<String>,
     #[serde(default)]
     pub scope: Option<String>,
+    /// On a machine ticket: the gateway port the rental's obs-websocket is
+    /// reachable on for renters' tools that can only be given a host and a
+    /// port. Assigned by the control plane per rental, so the gateway needs
+    /// no database to know which port belongs to which machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obs_port: Option<u16>,
     pub iat: i64,
     pub exp: i64,
 }
@@ -139,6 +145,7 @@ mod tests {
             mid: Some("machine-1".into()),
             rid: Some("rental-1".into()),
             scope: Some("webrtc".into()),
+            obs_port: None,
             iat: 1_000,
             exp,
         }

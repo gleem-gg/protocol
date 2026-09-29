@@ -58,6 +58,24 @@ pub enum FrameBody {
 
     /// Something went wrong that the other end should hear about.
     Error { message: String },
+
+    /// A renter's tool connected to the rental's obs-websocket through the
+    /// gateway. `session` is the connection's id, one per client socket, so a
+    /// Stream Deck and a chat bot can be connected at the same time without
+    /// touching the desktop stream.
+    ObsOpen,
+
+    /// One obs-websocket message, relayed verbatim in either direction. JSON
+    /// text only: the gateway offers the `obswebsocket.json` subprotocol and
+    /// nothing else, since binary does not cross this channel.
+    ObsMessage { payload: String },
+
+    /// One side of an obs-websocket connection went away. Ends that
+    /// connection only, never the machine's channel, unlike `Terminate`.
+    ObsClose {
+        #[serde(default)]
+        reason: Option<String>,
+    },
 }
 
 impl Frame {
