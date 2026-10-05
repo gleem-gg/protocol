@@ -11,6 +11,9 @@ use serde_json::Value;
 pub enum CommandKind {
     StartRental,
     StopRental,
+    /// Start saving a running rental's OBS setup, which the renter switched
+    /// on after the rental started. Payload: `{"rental_uuid": "…"}`.
+    EnableSetupSave,
     WipeWorkspace,
     PullRuntimeImage,
     UpdateAgent,
@@ -69,5 +72,30 @@ impl CommandResult {
             result: None,
             error: Some(error.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_setup_save_command() {
+        let command: Command = serde_json::from_str(
+            r#"{"uuid":"c1","type":"enable_setup_save","expires_at":"2026-10-05T12:00:00Z","payload":{"rental_uuid":"r1"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(command.kind, CommandKind::EnableSetupSave);
+        assert!(!command.kind.is_destructive());
+    }
+
+    #[test]
+    fn keeps_a_command_it_does_not_know_as_unknown() {
+        let command: Command =
+            serde_json::from_str(r#"{"uuid":"c1","type":"from_the_future","expires_at":"2026-10-05T12:00:00Z"}"#)
+                .unwrap();
+
+        assert_eq!(command.kind, CommandKind::Unknown);
     }
 }
