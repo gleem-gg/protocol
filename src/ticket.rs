@@ -27,7 +27,8 @@ const CLOCK_SKEW_SECONDS: i64 = 30;
 pub struct TicketPayload {
     pub v: u8,
     /// `session` for a browser, `machine` for an agent, `gateway` for a call
-    /// the gateway makes back to the control plane.
+    /// the gateway makes back to the control plane, `files` for a browser's
+    /// file explorer connection to one rental.
     pub typ: String,
     /// Session uuid. Absent on a machine ticket, which is not tied to one.
     #[serde(default)]

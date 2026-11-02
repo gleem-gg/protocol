@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::files::{FilesRequest, FilesResponse};
+
 /// One signalling message.
 ///
 /// `session` identifies which rental session a frame belongs to. A machine
@@ -73,6 +75,21 @@ pub enum FrameBody {
     /// One side of an obs-websocket connection went away. Ends that
     /// connection only, never the machine's channel, unlike `Terminate`.
     ObsClose {
+        #[serde(default)]
+        reason: Option<String>,
+    },
+
+    /// A file explorer request, gateway to agent. `session` is the browser's
+    /// files connection, one per open panel, like an obs-websocket client.
+    FilesRequest(FilesRequest),
+
+    /// The answer to one, agent to gateway.
+    FilesResponse(FilesResponse),
+
+    /// A files connection went away. Requests still in flight for it are
+    /// answered into the void; a download already handed to the browser
+    /// carries on, since the browser fetches it on its own.
+    FilesClose {
         #[serde(default)]
         reason: Option<String>,
     },

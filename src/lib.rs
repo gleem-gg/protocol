@@ -8,6 +8,7 @@
 
 pub mod command;
 pub mod enroll;
+pub mod files;
 pub mod heartbeat;
 pub mod signalling;
 pub mod specs;
@@ -42,4 +43,8 @@ pub mod capability {
     pub const GATEWAY_REACHABLE: &str = "gateway.reachable";
     /// The TURN relay answered a STUN binding request.
     pub const TURN_REACHABLE: &str = "turn.reachable";
+    /// The agent serves the rental file explorer (`files_request` frames and
+    /// transfer sockets). gleem.gg shows the Files panel only where this is
+    /// reported.
+    pub const FILES: &str = "files";
 }
