@@ -11,6 +11,10 @@
 //! chunks, and the gateway pipes it into a plain HTTP download for the
 //! browser. Nothing is stored on the way.
 //!
+//! Uploads run the same socket the other way: the browser POSTs the file to
+//! the gateway, which streams it to the agent, which writes it to a hidden
+//! part file and renames it into place only once every byte has arrived.
+//!
 //! The browser speaks the inner request and response objects directly, as
 //! JSON on its files socket; only the machine leg carries the frame envelope.
 
@@ -18,6 +22,20 @@ use serde::{Deserialize, Serialize};
 
 /// Bytes per binary frame on a transfer socket.
 pub const CHUNK_BYTES: usize = 256 * 1024;
+
+/// The largest single file a renter may upload.
+pub const MAX_UPLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Space an upload must leave free on the machine's disk, so a renter cannot
+/// fill the host's disk to the last byte.
+pub const UPLOAD_HEADROOM_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// The suffix of a file still being uploaded. The name also starts with a
+/// dot, so the panel hides it, and the setup save leaves it out.
+pub const PART_SUFFIX: &str = ".gleem-part";
+
+/// The workspace's own folders, which can be neither deleted nor renamed.
+pub const PROTECTED_FOLDERS: [&str; 3] = ["config", "media", "recordings"];
 
 /// The largest single file a renter may download. A zip of a folder is held
 /// to the same limit per file inside it, not in total.
@@ -37,13 +55,23 @@ pub const TRANSFER_TTL_SECONDS: u64 = 60;
 pub const MAX_PATH_BYTES: usize = 1024;
 
 /// What the browser asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilesOp {
+    #[default]
     /// The entries of one folder.
     List,
     /// A file as itself, or a folder as one zip.
     Download,
+    /// A file into the workspace, `size` bytes, creating missing folders on
+    /// the way. Lands under its name only once every byte has arrived.
+    Upload,
+    /// One new folder; its parent must exist.
+    Mkdir,
+    /// Move or rename `path` to `to`. Never replaces anything.
+    Rename,
+    /// A file, a symlink itself, or a folder with everything in it.
+    Delete,
     /// An operation this build does not know. Answered with
     /// [`FilesError::Unsupported`] rather than dropped, so a newer browser
     /// talking to an older agent gets an answer instead of a hang.
@@ -52,7 +80,7 @@ pub enum FilesOp {
 }
 
 /// One request, from the browser through the gateway to the agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesRequest {
     /// Chosen by the browser to match the response; opaque to everything else.
     pub id: String,
@@ -70,6 +98,15 @@ pub struct FilesRequest {
     /// dials the transfer socket. Never sent to the browser.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// For `rename`: where to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// For `upload`: the file's size in bytes, as the browser read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// For `upload`: replace a file already under that name.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replace: bool,
 }
 
 /// The answer to one request, from the agent through the gateway to the
@@ -113,9 +150,16 @@ pub enum FilesError {
     /// workspace.
     NotAllowed,
     InvalidPath,
-    /// A file over [`MAX_DOWNLOAD_BYTES`].
+    /// A download over [`MAX_DOWNLOAD_BYTES`], or an upload over
+    /// [`MAX_UPLOAD_BYTES`].
     TooLarge,
     TooManyTransfers,
+    /// Something is already there: an upload without `replace`, a new
+    /// folder, or a rename target.
+    Exists,
+    /// The machine's disk would be left with less than
+    /// [`UPLOAD_HEADROOM_BYTES`] free.
+    InsufficientSpace,
     Unsupported,
     MachineUnavailable,
     /// Anything else, including codes a newer build sends that this one does
@@ -145,8 +189,12 @@ pub enum EntryKind {
     Link,
 }
 
-/// The text frames on a transfer socket, around the binary chunks: a header
-/// first, then exactly one of done or failed.
+/// The text frames on a transfer socket, around the binary chunks.
+///
+/// A download: the agent sends a header, the chunks, then done or failed.
+/// An upload: the gateway sends the chunks then done with the byte count, and
+/// the agent answers done once the file is in place under its name, or
+/// failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TransferMessage {
@@ -170,6 +218,12 @@ pub enum TransferMessage {
 /// Checked by the gateway before relaying, so a bad request never reaches the
 /// host. The agent still opens everything with `openat2` beneath the
 /// workspace, which is what actually holds; this is the cheap first line.
+/// Whether a path names one of [`PROTECTED_FOLDERS`] or the root itself,
+/// which the panel may list but never delete, rename or replace.
+pub fn is_protected(path: &str) -> bool {
+    path.is_empty() || PROTECTED_FOLDERS.contains(&path)
+}
+
 pub fn is_safe_path(path: &str) -> bool {
     if path.is_empty() {
         return true;
@@ -211,6 +265,7 @@ mod tests {
                 path: "recordings".into(),
                 transfer: Some("t".into()),
                 token: Some("k".into()),
+                ..FilesRequest::default()
             }),
         );
 
@@ -236,8 +291,32 @@ mod tests {
 
     #[test]
     fn an_unknown_op_is_kept_and_answerable() {
-        let request: FilesRequest = serde_json::from_str(r#"{"id":"1","op":"rename","path":"a"}"#).unwrap();
+        let request: FilesRequest = serde_json::from_str(r#"{"id":"1","op":"chmod","path":"a"}"#).unwrap();
         assert_eq!(request.op, FilesOp::Unsupported);
+    }
+
+    #[test]
+    fn reads_the_managing_requests() {
+        let upload: FilesRequest =
+            serde_json::from_str(r#"{"id":"1","op":"upload","path":"media/a.png","size":12,"replace":true}"#).unwrap();
+        assert_eq!((upload.op, upload.size, upload.replace), (FilesOp::Upload, Some(12), true));
+
+        let rename: FilesRequest =
+            serde_json::from_str(r#"{"id":"2","op":"rename","path":"media/a.png","to":"media/b.png"}"#).unwrap();
+        assert_eq!((rename.op, rename.to.as_deref()), (FilesOp::Rename, Some("media/b.png")));
+
+        let plain: FilesRequest = serde_json::from_str(r#"{"id":"3","op":"mkdir","path":"media/x"}"#).unwrap();
+        assert!(!plain.replace);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("replace"));
+    }
+
+    #[test]
+    fn protects_the_workspace_folders_but_not_what_is_in_them() {
+        assert!(is_protected(""));
+        assert!(is_protected("media"));
+        assert!(is_protected("config"));
+        assert!(!is_protected("media/intro.mp4"));
+        assert!(!is_protected("mediathek"));
     }
 
     #[test]
