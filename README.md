@@ -8,6 +8,7 @@ runtime on somebody's machine.
 |---|---|
 | `enroll`, `heartbeat`, `command`, `specs`, `capability` | machine agent and gleem.gg |
 | `signalling` | machine agent and signalling gateway |
+| `files` | browser, signalling gateway and machine agent: the rental file explorer's requests and transfer sockets |
 | `ticket` | gleem.gg and signalling gateway: verifies the HMAC tickets `App\Services\GatewayTicketService` mints, byte for byte |
 
 Field names follow the JSON of the Laravel application rather than Rust
