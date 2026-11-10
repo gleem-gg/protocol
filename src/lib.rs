@@ -17,7 +17,8 @@ pub mod ticket;
 pub use command::{Command, CommandKind, CommandResult, CommandStatus};
 pub use enroll::{EnrollRequest, EnrollResponse};
 pub use heartbeat::{
-    AgentState, GpuTelemetry, HeartbeatRequest, HeartbeatResponse, RotateResponse, Telemetry,
+    AgentState, GpuTelemetry, HeartbeatRequest, HeartbeatResponse, RotateResponse, RuntimeImage,
+    Telemetry,
 };
 pub use signalling::{Frame, FrameBody};
 pub use specs::{CpuSpecs, GpuSpecs, NetworkSpecs, SpecsReport};
@@ -47,4 +48,7 @@ pub mod capability {
     /// transfer sockets). gleem.gg shows the Files panel only where this is
     /// reported.
     pub const FILES: &str = "files";
+    /// The runtime image gleem.gg currently names in its heartbeat response is
+    /// on the machine, so a rental starts without downloading it.
+    pub const RUNTIME_IMAGE_CACHED: &str = "runtime.image_cached";
 }

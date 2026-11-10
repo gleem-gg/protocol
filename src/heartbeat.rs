@@ -72,6 +72,33 @@ pub struct HeartbeatResponse {
     pub minimum_agent_version: Option<String>,
     #[serde(default)]
     pub commands: Vec<Command>,
+    /// The runtime image rentals on this machine currently start from. The
+    /// agent pulls it in the background while it has no rental, so the first
+    /// rental after enrolment, or after a new image is published, does not
+    /// spend its first minutes downloading. Absent from control planes that
+    /// predate it.
+    #[serde(default)]
+    pub runtime_image: Option<RuntimeImage>,
+}
+
+/// A runtime image as the control plane names it in a rental spec.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeImage {
+    pub image: String,
+    /// Pinned in production, so a moved tag cannot change what runs on
+    /// somebody else's hardware. Absent only for a developer's local image.
+    #[serde(default)]
+    pub digest: Option<String>,
+}
+
+impl RuntimeImage {
+    /// The exact reference to pull: by digest when there is one.
+    pub fn reference(&self) -> String {
+        match self.digest.as_deref() {
+            Some(digest) if !digest.is_empty() => format!("{}@{}", self.image, digest),
+            _ => self.image.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -82,4 +109,47 @@ pub struct RotateResponse {
     /// control plane.
     #[serde(default)]
     pub previous_valid_until: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(extra: serde_json::Value) -> HeartbeatResponse {
+        let mut body = serde_json::json!({"machine_status": "active"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(body).unwrap()
+    }
+
+    #[test]
+    fn reads_a_response_from_a_control_plane_that_names_no_runtime_image() {
+        assert_eq!(response(serde_json::json!({})).runtime_image, None);
+    }
+
+    #[test]
+    fn pins_the_runtime_image_by_digest() {
+        let image = response(serde_json::json!({"runtime_image": {
+            "image": "ghcr.io/gleem-gg/obs-runtime",
+            "digest": "sha256:abc"
+        }}))
+        .runtime_image
+        .unwrap();
+
+        assert_eq!(image.reference(), "ghcr.io/gleem-gg/obs-runtime@sha256:abc");
+    }
+
+    #[test]
+    fn falls_back_to_the_tag_when_no_digest_is_configured() {
+        // gleem.gg sends `null` when HOSTING_RUNTIME_DIGEST is unset.
+        let image = response(serde_json::json!({"runtime_image": {
+            "image": "ghcr.io/gleem-gg/obs-runtime",
+            "digest": null
+        }}))
+        .runtime_image
+        .unwrap();
+
+        assert_eq!(image.reference(), "ghcr.io/gleem-gg/obs-runtime");
+    }
 }
